@@ -1,0 +1,848 @@
+---
+title: "DATA 621 – Business Analytics and Data Mining - HW 4 - INSURANCE EVALUATION"
+author: "Enid Roman"
+date: "2023-11-29"
+output: 
+  word_document: default
+  theme: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# load libraries
+suppressWarnings({
+  # Code that generates specific warnings
+  # Other code
+  library(mice)
+  library(tidyverse)
+  library(psych)
+  library(corrplot)
+  library(RColorBrewer)
+  library(knitr)
+  library(MASS)
+  library(caret)
+  library(kableExtra)
+  library(ResourceSelection)
+  library(pROC)
+  library(ggplot2)
+  library(gridExtra)
+  library(ggpubr)
+})
+
+suppressMessages({
+  library(mice)
+  library(tidyverse)
+  library(psych)
+  library(corrplot)
+  library(RColorBrewer)
+  library(knitr)
+  library(MASS)
+  library(caret)
+  library(kableExtra)
+  library(ResourceSelection)
+  library(pROC)
+  library(ggplot2)
+  library(gridExtra)
+  library(ggpubr)
+  })
+
+```
+
+
+```{r}
+#load data
+insurance_train<- read.csv("https://raw.githubusercontent.com/enidroman/DATA-621-Business-Analytics-and-Data-Mining/main/insurance_training_data.csv")
+insurance_test <- read.csv("https://raw.githubusercontent.com/enidroman/DATA-621-Business-Analytics-and-Data-Mining/main/insurance-evaluation-data%20(1).csv")
+```
+
+
+## <span style="color: blue;">**INTRODUCTION**</span>
+In this assignment, I will explore, analyze and model a data set containing approximately 8000
+records representing a customer at an auto insurance company. Each record has two response variables. The
+first response variable, TARGET_FLAG, is a 1 or a 0. A “1” means that the person was in a car crash. A zero
+means that the person was not in a car crash. The second response variable is TARGET_AMT. This value is zero
+if the person did not crash their car. But if they did crash their car, this number will be a value greater than zero.
+
+My objective is to build multiple linear regression and binary logistic regression models on the training data
+to predict the probability that a person will crash their car and also the amount of money it will cost if the person
+does crash their car. I can only use the variables given to me (or variables that I derive from the variables
+provided). Below is a short description of the variables of interest in the data set:
+
+```{r}
+vn <- c("INDEX","TARGET_FLAG", "TARGET_AMT", "AGE", "BLUEBOOK", "CAR_AGE", "CAR_TYPE", "CAR_USE", "CLM_FREQ", "EDUCATION", "HOMEKIDS", "HOME_VAL", "INCOME", "JOB", "KIDSDRIV", "MSTATUS", "MVR_PTS", "OLDCLAIM", "PARENT1", "RED_CAR", "REVOKED", "SEX", "TIF", "TRAVTIME", "URBANICITY", "YOJ")
+defin <- c("Identification Variable (do not use)", "Was Car in a crash? 1=YES 0=NO", "If car was in a crash, what was the cost", "Age of Driver", "Value of Vehicle", "Vehicle Age", "Type of Car", "Vehicle Use", "# Claims (Past 5 Years)", "Max Education Level", "# Children at Home", "Home Value", "Income", "Job Category", "# Driving Children", "Marital Status", "Motor Vehicle Record Points", "Total Claims (Past 5 Years)", "Single Parent", "A Red Car", "License Revoked (Past 7 Years)", "Gender", "Time in Force", "Distance to Work", "Home/Work Area", "Years on Job")
+theor_effect <- c("None", "None", "None", "Very young people tend to be risky. Maybe very old people also.", "Unknown effect on probability of collision, but probably effect the payout if there is a crash.", "Unknown effect on probability of collision, but probably effect the payout if there is a crash.", "Unknown effect on probability of collision, but probably effect the payout if there is a crash.", "Commercial vehicles are driven more, so might increase probability of collision.", "The more claims you filed in the past, the more you are likely to file in the future.", "Unknown effect, but in theory more educated people tend to drive more safely.", "Unknown effect", "In theory, home owners tend to drive more responsibly.", "In theory, rich people tend to get into fewer crashes.", "In theory, white collar jobs tend to be safer.", "When teenagers drive your car, you are more likely to get into crashes.", "In theory, married people drive more safely.", "If you get lots of traffic tickets, you tend to get into more crashes.", "If your total payout over the past five years was high, this suggests future payouts will be high.", "Unknown effect.", "Urban legend says that red cars (especially red sports cars) are more risky. Is that true?", "If your license was revoked in the past 7 years, you probably are a more risky driver.", "Urban legend says that women have less crashes then men. Is that true?", "People who have been customers for a long time are usually more safe.", "Long drives to work usually suggest greater risk.", "Unknown", "People who stay at a job for a long time are usually more safe.")
+kable(cbind(vn, defin, theor_effect), col.names = c("VARIABLE NAME", "DEFINITION", "THEORETICAL EFFECT")) %>% 
+  kable_styling(full_width = T)
+```
+
+
+## <span style="color: blue;">**DATA EXPLORATION**</span>
+
+### <span style="color: blue;">**DATA SUMMARY**</span>
+
+
+The dataset consists of 28 variables and 8,161 observations with no missing values. Additionally, describe function from psych package shows us the mean, standard deviation, skewness and other statistical analysis.
+
+
+
+```{r}
+# summary statistics
+insurance_train %>% 
+  mutate(target_amt = as.factor(TARGET_AMT), 
+         target = as.factor(TARGET_FLAG)) %>% 
+  describe()
+```
+
+```{r}
+summary(insurance_train)
+```
+
+### <span style="color: blue;">**DATA STRUCTURE**</span>
+
+
+```{r}
+str(insurance_train)
+```
+
+### <span style="color: blue;">**MISSING VALUES**</span>
+
+
+There are 970 missing values.
+
+
+```{r}
+# count the total number of missing values 
+sum(is.na(insurance_train))
+```
+
+\newpage
+
+
+## <span style="color: blue;">**DATA OBSERVATION**</span>
+
+
+### <span style="color: blue;">**TAREGET VARIABLES**</span>
+
+
+I will plot our two target variables to get better understanding of the data set. Moving left to right we plot a bar plot of TARGET_FLAG and then box plots of TARGET_AMT with and without outliers.
+
+
+```{r}
+custom_theme <- theme_minimal() +
+  theme(
+    text = element_text(family = "serif"),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+insurance_train %>%
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG)) %>%
+  ggplot(aes(x = TARGET_FLAG, fill = TARGET_FLAG)) +
+  geom_bar() + scale_y_continuous() +
+  custom_theme +
+  theme(legend.position = "none") +
+  labs(x = "TARGET_FLAG", y = "n()") +
+  labs(title = "TARGET_FLAG") -> p1
+
+insurance_train %>% filter(TARGET_FLAG == 1) %>%
+  ggplot(aes(x = 1, y = TARGET_AMT)) +
+  geom_boxplot() +
+  stat_summary(fun.y = "mean", geom = "point", shape = 23, size = 3, fill = "#FF2700") +
+  scale_x_continuous(breaks = NULL) +
+  custom_theme +
+  labs(title = "TARGET_AMT") -> p2
+
+insurance_train %>% filter(TARGET_FLAG == 1) %>%
+  ggplot(aes(x = 1, y = TARGET_AMT)) +
+  geom_boxplot() +
+  stat_summary(fun.y = "mean", geom = "point", shape = 23, size = 3, fill = "#008FD5") +
+  scale_y_continuous(limits = quantile(insurance_train$TARGET_AMT, c(0.1, 0.9))) +
+  scale_x_continuous(breaks = NULL) +
+  custom_theme +
+  labs(title = "TARGET_AMT - No outliers") -> p3
+
+grid.arrange(p1, p2, p3, ncol = 3)
+
+```
+
+
+
+```{r}
+# change data type of some variables for visualization
+insurance_train <- insurance_train %>% 
+  dplyr::select(-INDEX) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG),
+         KIDSDRIV = as.factor(KIDSDRIV),
+         HOMEKIDS = as.factor(HOMEKIDS),
+         PARENT1 = as.factor(PARENT1),
+         CLM_FREQ = as.factor(CLM_FREQ),
+         INCOME = str_replace_all(INCOME, "[\\$,]", ""),
+         HOME_VAL = str_replace_all(HOME_VAL, "[\\$,]", ""),
+         BLUEBOOK = str_replace_all(BLUEBOOK, "[\\$,]", ""),
+         OLDCLAIM = str_replace_all(OLDCLAIM, "[\\$,]", ""),
+         OLDCLAIM = as.integer(OLDCLAIM),
+         BLUEBOOK = as.integer(BLUEBOOK),
+         HOME_VAL = as.integer(HOME_VAL),
+         INCOME = as.integer(INCOME))
+```
+
+
+\newpage
+
+
+### <span style="color: blue;">**DISTRIBUTIONS**</span>
+
+As part of the data exploration I would like to find out the distribution, discrete and continuous variables. I will check the outliers and analyze the skewness of the variables. I will also look at the correlation between variables to see if they are multicollinearity among the independent variables. 
+
+#### <span style="color: blue;">**BAR CHART**</span>
+
+```{r}
+# Distribution of discrete variables
+k <- insurance_train %>% 
+  ggplot(aes(KIDSDRIV, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+hk <- insurance_train %>% 
+  ggplot(aes(HOMEKIDS, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+p <- insurance_train %>% 
+  ggplot(aes(PARENT1, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+m <- insurance_train %>% 
+  ggplot(aes(MSTATUS, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+s <- insurance_train %>% 
+  ggplot(aes(SEX, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+e <- insurance_train %>% 
+  ggplot(aes(EDUCATION, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+j <- insurance_train %>% 
+  ggplot(aes(JOB, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+cu <- insurance_train %>% 
+  ggplot(aes(CAR_USE, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+ct <- insurance_train %>% 
+  ggplot(aes(CAR_TYPE, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+rc <- insurance_train %>% 
+  ggplot(aes(RED_CAR, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+r <- insurance_train %>% 
+  ggplot(aes(REVOKED, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+uc <- insurance_train %>% 
+  ggplot(aes(URBANICITY, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+cf <- insurance_train %>% 
+  ggplot(aes(CLM_FREQ, fill = TARGET_FLAG)) +
+  geom_bar(position = position_dodge()) +
+  theme(legend.position = "none")
+
+# Arrange plots
+ggarrange(k, nrow =1)
+ggarrange(hk,nrow =1)
+ggarrange(p, nrow =1) 
+ggarrange(m, nrow =1)
+ggarrange(s, nrow =1)
+ggarrange(e, nrow =1)
+ggarrange(j, nrow =1)
+ggarrange(cu,nrow =1)
+ggarrange(ct,nrow =1)
+ggarrange(rc,nrow =1)
+ggarrange(r, nrow =1)
+ggarrange(uc,nrow =1)
+ggarrange(cf,nrow =1)
+
+# Change data type of some variables for visualization
+distribution <- insurance_train %>% 
+  dplyr::select(c("TARGET_FLAG", "AGE", "YOJ", "INCOME", "HOME_VAL", "TRAVTIME", "BLUEBOOK", "TIF", "OLDCLAIM", "MVR_PTS", "CAR_AGE")) %>% 
+  gather(key, value, -TARGET_FLAG) %>% 
+  mutate(value = as.integer(value),
+         key = as.factor(key),
+         TARGET_FLAG = as.factor(TARGET_FLAG))
+
+```
+
+Here KIDSDRIV, HOMEKIDS, PARENT1 variables tell us having no kids results in more car crash. I do not see a significant effect of individual’s sex, martial status or the type of care they use on car crash. However, high school students, blue collar employees, or SUV owners get into more car crash. Lastly, if the individual’s license is revoked or they are driving on an urban area, they have higher chance of car crash.
+
+\newpage
+
+Frequency counts of class occurrence for the discrete variables are provided below:
+
+```{r}
+
+DataExplorer::plot_bar(
+  data = insurance_train,
+         order_bar = T,
+         ggtheme=theme_bw())
+       
+```
+
+I visualize the distribution profiles for each of the predictor variables. This will help  me make a plan on which variables to include, how they might be related to each other or the target, and finally identify outliers or transformations that might help improve model resolution.
+
+\newpage
+
+#### <span style="color: blue;">**HISTORGRAM DISTRIBUTIONS**</span>
+
+
+```{r}
+# histogram of continous variables
+distribution %>% 
+  ggplot(aes(value)) +
+  facet_wrap(~key, scale = "free",  ncol = 3) +
+  geom_histogram(binwidth = function(x) 2 * IQR(x) / (length(x)^(1/3)), fill="#56B4E9") +
+  theme_minimal()
+
+```
+
+
+The distribution profiles show the prevalence of kurtosis, specifically right skew in variables TRAVTIME, OLDCLAIM, MVR_PTS, TARGET_AMT, INCOME, BLUEBOOK, and approximately normal distributions in YOJ, CARAGE, HOME_VAL, and AGE. When deviations are skewed from a traditional normal distribution, this can be problematic for regression assumptions, and thus we might need to transform the data. Under logistic regression, we will need to dummy factor-based variables for the model to understand the data.
+
+Several features have both a distribution along with a high number of values at an extreme. However, based on the feature meanings and provided information, there is no reason to believe that any of these extreme values are mistakes, data errors, or otherwise inexplicable. As such, we will not remove the extreme values, as they represent valuable data and could be predictive of the target.
+
+\newpage
+
+##### <span style="color: blue;">**BOXPLOT**</span>
+
+I also did box-plots to get an idea of the spread of the response variable TARGET_AMT in relation to all of the non-numeric variables. 
+
+```{r}
+# boxplot of continous variables
+distribution %>% 
+  ggplot(aes(x = key, y = value)) +
+  geom_boxplot(aes(fill = TARGET_FLAG)) +
+  facet_wrap(~ key, scales = 'free', ncol = 3) +
+  scale_fill_manual(values=c("#999999", "#E69F00")) +
+  theme_minimal()
+
+
+```
+
+Here I see BLUEBOOK, INCOME, OLDCLAIM have high number of outliers compared to other variables. I also see people with older car, higher home value, higher income or older customer get in to less car crash. However, people with motor vehicle record points or high number of old claims tend to get in to more car crash.
+
+\newpage
+
+#### <span style="color: blue;">**VARIABLE PLOTS**</span>
+
+##### <span style="color: blue;">**SCATTER PLOT**</span>
+
+I generate scatter plots of each variable versus the target variable, TARGET_AMT, to get an idea of the relationship between them. I observe some notable trends in the scatter plots below such as our response variable TARGET_AMT is likely to be lower when individuals have more kids at home as indicated by the HOMEKIDS feature, and when they have more teenagers driving the car indicated by the feature KIDSDRIV.
+
+A pairwise comparison plot between all features, both numeric and non-numeric is shown following the scatter plot where this initially implies that there aren’t a significant amount of correlated features and this can give some insight into the expected significance and performing dimensionality reduction on the datasets for the models.
+
+```{r}
+insurance_train %>%
+  keep(is.numeric) %>%
+  gather(variable, value, -TARGET_AMT) %>%
+  ggplot(., aes(value, TARGET_AMT)) + 
+  geom_point() +
+  scale_color_brewer(palette="Set1") +
+  theme_light() +
+  theme(legend.position = "none") +
+  facet_wrap(~variable, scales ="free", ncol = 4) +
+  labs(x = element_blank(), y = element_blank())
+```
+
+\newpage
+
+
+```{r}
+# change all variable's data type for correlation
+insurance_corr <- data.frame(lapply(insurance_train, function(x) as.numeric(as.factor(x))))
+```
+
+
+##### <span style="color: blue;">**CORRELATION TABLE**</span>
+
+
+```{r}
+# top correlated variables
+a <- sort(cor(dplyr::select(insurance_corr, TARGET_FLAG, everything()))[,1], decreasing = T)
+b <- sort(cor(dplyr::select(insurance_corr, TARGET_AMT, everything()))[,1], decreasing = T)
+kable(cbind(a, b), col.names = c("TARGET_FLAG", "TARGET_AMT")) %>% 
+  kable_styling(full_width = F) %>% 
+  add_header_above(c(" ", "Correlation" = 2))
+```
+
+
+\newpage
+
+
+##### <span style="color: blue;">**CORRELATION PLOT**</span>
+
+
+```{r}
+# correlation plot
+corrplot(cor(dplyr::select(drop_na(insurance_corr), everything())), 
+         method = "number", 
+         type = "lower",
+         col = brewer.pal(n = 26, name = "Paired"),
+         number.cex = .7, tl.cex = .7,
+         tl.col = "black", tl.srt = 45)
+
+```
+
+In the correlation table and plot we see MVR_PTS, CLM_FREQ, and OLDCLAIM are the most positively correlated variables with our response variables. Whereas, URBANICITY is the most negatively correlated variable. Rest of the variables are weakly correlated.
+
+Distribution of Kids Driving, Kids being home, Single Parent, and maried families most of them are not in a car crash. 
+
+Distribution of Female, N/A Degrees, Blue Colar, SUV, and Highly Urban Area are are into more car crash. 
+
+
+\newpage
+
+
+## <span style="color: blue;">**DATA PREPARATION**</span>
+
+### <span style="color: blue;">**DATA CLEANING**</span>
+
+
+Data Observation from the EDA that will need to be addressed:
+
+  * TARGET_FLAG appears to have an imbalance with almost 3X as may no accidents vs accidents.
+  * TARGET_AMT has some outlier that we will have to address in data prep, model selection or both
+  * NAs in Explanatory Variables - Several variables have NA (YOJ, CAR_AGE, AGE)
+  * Dollar Signs ($) - Several variables have dollars that cause the variables to be treated as factors
+
+ 
+I will use the tidyverse dplyr to address some of the data clean-up items so we can continue our EDA and extend it to the explanatory variables. We’ll make the following changes to the data set and then have another look at the data summaries.
+
+  * Remove character from number variable and cast as numeric (INCOME, HOME_VAL, BLUE_BOOK, OLDCLAIM)
+  * INCOME, HOME_VAL, BLUEBOOK and OLDCLAIM has also been rescaled by dividing by 1000
+  * Remove random characters from variables (z_, <, etc.)
+  * Replace NAs with median values
+  * Replace negative CAR_AGE value(s) with the Median CAR_AGE
+  
+I have already performed some data transformation for our visualization. INCOME, HOME_VAL, BLUEBOOK, OLDCLAIM variables have dollar sign and comma in them. These were removed (and converted as integer) using the stringr package. As you have seen in our statistical analysis, some of the variables have missing values. I will use the mice package and random forest method to impute the missing data. Mice uses multivariate imputations to estimate the missing values. Using multiple imputations helps in resolving the uncertainty for the missingness. Our response variables will be removed as predictor variables but still will be imputed. Lastly, we will perform the same data preparation for our unseen dataset.
+
+
+```{r}
+insurance_train_new <- insurance_train %>% 
+  mutate(INCOME =as.numeric(str_replace_all(INCOME,'([\\$,])',''))/1000) %>%
+  mutate(HOME_VAL =as.numeric(str_replace_all(HOME_VAL,'([\\$,])',''))/1000) %>%
+  mutate(BLUEBOOK =as.numeric(str_replace_all(BLUEBOOK,'([\\$,])',''))/1000) %>%
+  mutate(OLDCLAIM =as.numeric(str_replace_all(OLDCLAIM,'([\\$,])',''))/1000) %>%
+  mutate(MSTATUS =as.factor(str_replace_all(MSTATUS,'([z_<])',''))) %>%
+  mutate(SEX =as.factor(str_replace_all(SEX,'([z_<])',''))) %>%
+  mutate(EDUCATION =as.factor(str_replace_all(EDUCATION,'([z_<])',''))) %>%
+  mutate(JOB = as.factor(str_replace_all(JOB,'([z_<])',''))) %>%
+  mutate(CAR_TYPE = as.factor(str_replace_all(CAR_TYPE,'([z_<])',''))) %>%
+  mutate(URBANICITY = as.factor(str_replace_all(URBANICITY,'([z_<])',''))) %>%
+  mutate(CAR_AGE = if_else(is.na(CAR_AGE),median(CAR_AGE,na.rm=TRUE),CAR_AGE)) %>%
+  mutate(CAR_AGE = if_else(CAR_AGE<0,median(CAR_AGE,na.rm=TRUE),CAR_AGE)) %>%
+  mutate(YOJ = if_else(is.na(YOJ),median(YOJ,na.rm=TRUE),YOJ)) %>%
+  mutate(AGE = if_else(is.na(AGE),median(AGE,na.rm=TRUE),AGE)) %>%
+  mutate(INCOME = if_else(is.na(INCOME),median(INCOME,na.rm=TRUE),INCOME)) %>%
+  mutate(HOME_VAL = if_else(is.na(HOME_VAL),median(HOME_VAL,na.rm=TRUE),HOME_VAL))
+  
+
+# Order EDUCATION FACTOR
+
+   insurance_train$EDUCATION <- ordered(insurance_train$EDUCATION, levels = c("High School", "Bachelors", "Masters", "PhD") )
+
+```
+
+
+### <span style="color: blue;">**REVISED DATA**</span>
+
+
+```{r}
+# summary statistics
+insurance_train_new %>% 
+  mutate(target_amt = as.factor(TARGET_AMT), 
+         target = as.factor(TARGET_FLAG)) %>% 
+  describe()
+```
+
+
+```{r}
+summary(insurance_train_new)
+```
+
+```{r}
+str(insurance_train_new)
+```
+
+```{r}
+# count the total number of missing values 
+sum(is.na(insurance_train_new))
+```
+
+\newpage
+
+### <span style="color: blue;">**IMPUTATING TRAIN DATA**</span>
+
+
+```{r}
+set.seed(123)
+init <- mice(insurance_train_new)
+meth <- init$method
+predM <- init$predictorMatrix
+predM[, c("TARGET_FLAG", "TARGET_AMT")] <- 0 #this code will remove the variable as a predictor but still will be imputed
+insurance_impute <- mice(insurance_train_new, method = 'rf', predictorMatrix=predM)
+insurance_imputed <- complete(insurance_impute)
+print(paste0("Missing value after imputation: ", sum(is.na(insurance_imputed))))
+```
+
+\newpage
+
+### <span style="color: blue;">**PREPARING EVALUATION DATA**</span>
+
+
+```{r}
+
+insurance_test <- insurance_test %>% 
+  dplyr::select(-c(TARGET_FLAG, TARGET_AMT, INDEX)) %>% 
+  mutate(KIDSDRIV = as.factor(KIDSDRIV),
+         HOMEKIDS = as.factor(HOMEKIDS),
+         PARENT1 = as.factor(PARENT1),
+         CLM_FREQ = as.factor(CLM_FREQ),
+         INCOME = str_replace_all(INCOME, "[\\$,]", ""),
+         HOME_VAL = str_replace_all(HOME_VAL, "[\\$,]", ""),
+         BLUEBOOK = str_replace_all(BLUEBOOK, "[\\$,]", ""),
+         OLDCLAIM = str_replace_all(OLDCLAIM, "[\\$,]", ""),
+         OLDCLAIM = as.integer(OLDCLAIM),
+         BLUEBOOK = as.integer(BLUEBOOK),
+         HOME_VAL = as.integer(HOME_VAL),
+         INCOME = as.integer(INCOME))
+```
+
+
+### <span style="color: blue;">**IMPUTING EVALUATION DATA**</span>
+
+```{r}
+# imputating evaluation data
+init <- mice(insurance_test)
+meth <- init$method
+predM <- init$predictorMatrix
+insurance_eval_impute <- mice(insurance_test, method = 'rf', predictorMatrix=predM)
+insurance_eval_imputed <- complete(insurance_eval_impute)
+insurance_eval_imputed <- data.frame(lapply(insurance_eval_imputed, function(x) as.numeric(as.factor(x))))
+print(paste0("Missing value after imputation: ", sum(is.na(insurance_eval_imputed))))
+```
+
+### <span style="color: blue;">**CHECK FOR MULTICOLLINEARITY**</span>
+
+
+```{r}
+
+insurance_vif <- data.frame(lapply(insurance_imputed, function(x) as.numeric(as.factor(x))))
+kable((car::vif(glm(TARGET_FLAG ~. , data = insurance_vif))), col.names = c("VIF Score")) %>%  #remove tax for high vif score
+  kable_styling(full_width = F)
+```
+
+In the table above table I check for multicollinearity and there is no cause for concern because the VIF score is at a conservative level for all variables.
+
+\newpage
+
+
+## <span style="color: blue;">**BUILD MODELS**</span>
+
+I will build at least three different multiple linear regression models and three different binary logistic regression models using the original dataset, the imputed dataset, forward and backward selected variables and a boxcox transformed dataset to see which one yields the best performance.
+
+
+### <span style="color: blue;">**MULTIPLE LINEAR REGRESSION MODEL 1**</span>
+
+#### <span style="color: blue;">**ORIGIONAL VALUE MODEL**</span>
+
+
+
+```{r}
+insurance_corr <- dplyr::select(insurance_corr, -"TARGET_FLAG")
+model1 <- lm(TARGET_AMT ~ ., insurance_corr)
+summary(model1)
+```
+
+In the Mutiple Linear Regression Model 1, I see the min-max and 1Q-3Q have different magnitudes and the median is not close to zero. This means is not good but lets do some more evaluation. The p-value below shows that the probability of this variables to be irrelevant is very low. Lastly, R-squared is 0.15, which means this model explains 15% of the data’s variation. Overall, I would say this is a bad model.
+
+
+\newpage
+
+
+### <span style="color: blue;">**MULTIPLE LINEAR REGRESSION MODEL 2**</span>
+
+#### <span style="color: blue;">**IMPUTED MODEL**</span>
+
+
+```{r}
+insurance_vif <- dplyr::select(insurance_vif, -"TARGET_FLAG")
+model2 <- lm(TARGET_AMT ~ ., insurance_vif)
+summary(model2)
+```
+
+In the Multiple Linear Regression Model 2, I see the min-max and 1Q-3Q have different magnitudes and the median is not close to zero. This means is not good but lets do some more evaluation. The p-value below shows that the probability of this variables to be irrelevant is very low. Lastly, R-squared is 0.15, which means this model explains 15% of the data’s variation. Overall, I would say this is a bad model.
+
+
+\newpage
+
+
+### <span style="color: blue;">**MULTIPLE LINEAR REGRESSION MODEL 3**</span>
+
+#### <span style="color: blue;">**STEPWISE TRANSFORMED MODEL**</span>
+
+
+```{r}
+model3 <- stepAIC(model2, direction = "both", trace = FALSE)
+summary(model3)
+```
+
+In the Multiple Linear Regression Model 3, I see the min-max and 1Q-3Q have different magnitudes and the median is not close to zero. This means is not good but lets do some more evaluation. The p-value below shows that the probability of this variables to be irrelevant is very low. Lastly, R-squared is 0.15, which means this model explains 15% of the data’s variation. However, we see improved p-value for several variables. Overall, I would say this is a better model.
+
+
+\newpage
+
+
+### <span style="color: blue;">**MULTIPLE LINEAR REGRESSION MODEL 4**</span>
+
+#### <span style="color: blue;">**BOXCOX TRANSFORMATION MODEL**</span>
+
+
+```{r}
+insurance_boxcox <- preProcess(insurance_vif, c("BoxCox"))
+in_bc_transformed <- predict(insurance_boxcox, insurance_vif)
+model4 <- lm(TARGET_AMT ~ ., in_bc_transformed)
+summary(model4)
+```
+
+As seen previously, most of our dataset has many skewed variables. When an attribute has a normal distribution but is shifted, this is called a skew. The distribution of an attribute can be shifted to reduce the skew and make it more normal The Box Cox transform can perform this operation (assumes all values are positive). In the Mutiple Linear Regression Model 4, I see the min-max and 1Q-3Q have quite similar magnitudes and the median is close to zero. This means this model is good but lets do some more evaluation. The p-value below shows that the probability of this variables to be irrelevant is very low. Lastly, R-squared is 0.22, which means this model explains 22% of the data’s variation. Overall, I would say this is the best model.
+
+
+\newpage
+
+
+
+### <span style="color: blue;">**BINARY LOGISTIC REGRESSION MODEL 1**</span>
+
+#### <span style="color: blue;">**ORIGIONAL VALUE MODEL**</span>
+
+
+```{r}
+logit_data <- data.frame(lapply(insurance_imputed, function(x) as.numeric(as.factor(x)))) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG)) %>% 
+  dplyr::select(-"TARGET_AMT")
+```
+
+
+```{r}
+model5 <- glm(TARGET_FLAG ~ ., family = "binomial", logit_data)
+summary(model5)
+```
+In the Binary Logistic Regression Model 1, I see min-max and 1Q-3Q magnitudes is quite close and the median is close to zero. This model shows many variables with significant p-value. We will see with following model whether AIC score improves or not.
+
+
+\newpage
+
+
+### <span style="color: blue;">**BINARY LOGISTIC REGRESSION MODEL 2**</span>
+
+#### <span style="color: blue;">**STEPWISE TRANSFORMED MODEL**</span>
+
+
+```{r}
+model6 <- stepAIC(model5, direction = "both", trace = FALSE)
+summary(model6)
+```
+In the Binary Logistic Regression Model 2, I use forward and backward step-wise variables selection algorithm. We see min-max and 1Q-3Q magnitudes is quite close and the median is close to zero. This model’s variables selection is better with better p-value. However AIC score has not improved.
+
+
+\newpage
+
+
+### <span style="color: blue;">**BINARY LOGISTIC REGRESSION MODEL 3**</span>
+
+#### <span style="color: blue;">**BOXCOX TRANSFORMATION MODEL**</span>
+
+
+```{r}
+insurance_boxcox1 <- preProcess(logit_data, c("BoxCox"))
+in_bc_transformed1 <- predict(insurance_boxcox1, logit_data)
+model7 <- glm(TARGET_FLAG ~ ., family = "binomial", in_bc_transformed1)
+summary(model7)
+```
+In the Binary Logistic Regression Model 3, I see min-max and 1Q-3Q magnitudes is quite close and the median is close to zero. This model too shows many variables with significant p-value. However, this model has the best AIC score so far.
+
+\newpage
+
+## <span style="color: blue;">**SELECT MODEL**</span>
+
+### <span style="color: blue;">**BINARY LOGISTIC REGRESSION METRICS**</span>
+
+#### <span style="color: blue;">**COMPARING ALL BINARY LOGISTIC MODELS USING VARIOUS MEASURES**</span>
+
+
+To make prediction, I will compare various metrics for all three models. We calculate all three models’ accuracy, classification error rate, precision, sensitivity, specificity, F1 score, AUC, and confusion matrix. Even though all models yield similar metrics value, model 5 has the highest AUC value. We will pick model 5 with imputed values for our prediction.
+
+
+```{r}
+# comparing all binary logistic models using various measures
+c1 <- confusionMatrix(as.factor(as.integer(fitted(model5) > .5)), as.factor(model5$y), positive = "1")
+c2 <- confusionMatrix(as.factor(as.integer(fitted(model6) > .5)), as.factor(model6$y), positive = "1")
+c3 <- confusionMatrix(as.factor(as.integer(fitted(model7) > .5)), as.factor(model7$y), positive = "1")
+
+roc1 <- roc(logit_data$TARGET_FLAG,  predict(model5, logit_data, interval = "prediction"))
+roc2 <- roc(logit_data$TARGET_FLAG,  predict(model6, logit_data, interval = "prediction"))
+roc3 <- roc(logit_data$TARGET_FLAG,  predict(model7, logit_data, interval = "prediction"))
+
+metrics1 <- c(c1$overall[1], "Class. Error Rate" = 1 - as.numeric(c1$overall[1]), c1$byClass[c(1, 2, 5, 7)], AUC = roc1$auc)
+metrics2 <- c(c2$overall[1], "Class. Error Rate" = 1 - as.numeric(c2$overall[1]), c2$byClass[c(1, 2, 5, 7)], AUC = roc2$auc)
+metrics3 <- c(c3$overall[1], "Class. Error Rate" = 1 - as.numeric(c3$overall[1]), c3$byClass[c(1, 2, 5, 7)], AUC = roc3$auc)
+
+kable(cbind(metrics1, metrics2, metrics3), col.names = c("Model 5", "Model 6", "Model 7"))  %>% 
+  kable_styling(full_width = T)
+
+```
+
+
+\newpage
+
+### <span style="color: blue;">**PLOTTING ROC CURVE OF MODEL 3**</span>
+
+
+```{r}
+
+plot(roc(logit_data$TARGET_FLAG,  predict(model5, logit_data, interval = "prediction")), print.auc = TRUE, main = "Model 5" )
+```
+
+\newpage
+
+### <span style="color: blue;">**PREDICTION MODEDL 5**</span>
+
+
+```{r}
+# predict
+predict <- predict(model5, insurance_eval_imputed, interval = "prediction")
+eval <- table(as.integer(predict > .5))
+print(paste(eval[1], "not in a car crash", "and", eval[2], "in a car crash"))
+```
+
+\newpage
+
+### <span style="color: blue;">**MUTIPLE LINEAR REGRESSION METRICS**</span>
+
+#### <span style="color: blue;">**COMPARING ALL BINARY LOGISTIC MODELS USING VARIOUS MEASURES**</span>
+
+
+
+```{r}
+a1 <- mean((summary(model1))$residuals^2)
+a2 <- mean((summary(model2))$residuals^2)
+a3 <- mean((summary(model3))$residuals^2)
+a4 <- mean((summary(model4))$residuals^2)
+a5 <- rbind(a1, a2, a3, a4)
+ 
+b1 <- summary(model2)$r.squared
+b2 <- summary(model3)$r.squared
+b3 <- summary(model1)$r.squared
+b4 <- summary(model4)$r.squared
+b5 <- rbind(b1, b2, b3, b4)
+
+c1 <- summary(model1)$fstatistic
+c2 <- summary(model2)$fstatistic
+c3 <- summary(model3)$fstatistic
+c4 <- summary(model4)$fstatistic
+c5 <- rbind(c1, c2, c3, c4)
+
+mlr_metrics <- data.frame(cbind(a5, b5, c5), row.names = c("Model 1", "Model 2", "Model 3", "Model 4"))
+colnames(mlr_metrics) <- c("MSE", "R-Squared", "value", "numdf", "dendf")
+kable(mlr_metrics) %>% 
+  kable_styling(full_width = T) %>% 
+  add_header_above(c(" ", " " = 2, "F-Statistic" = 3))
+```
+
+
+\newpage
+
+
+### <span style="color: blue;">**RESIDUAL PLOT**</span>
+
+
+```{r}
+plot(model4)
+```
+
+In the residual plot, I see that the variance of residuals are not uniform which indicates our explanatory variable is probably does not fully explain the data. Also the quartile-quartile plot, I see that the residuals are not normally distributed. Therefore, I would say overall this is not a good model.
+
+
+\newpage
+
+
+### <span style="color: blue;">**PREDICTION MODEL 6**</span>
+
+
+```{r}
+# predict
+predict <- predict(model6, insurance_eval_imputed, interval = "prediction")
+eval <- table(as.integer(predict > .5))
+print(paste(eval[1], "not in a car crash", "and", eval[2], "in a car crash"))
+```
+
+### <span style="color: blue;">**PREDICTION MODEL 7**</span>
+
+
+```{r}
+# predict
+predict <- predict(model7, insurance_eval_imputed, interval = "prediction")
+eval <- table(as.integer(predict > .5))
+print(paste(eval[1], "not in a car crash", "and", eval[2], "in a car crash"))
+```
+
+\newpage
+
+
+## <span style="color: blue;">**CONCLUSION**
+
+I explored, analyzed and modeled a data set containing information on insurance evaluation for various variables, which had some missing values and had some outliers. Some of the variables were normally distributed, while others were moderate to high skewness. There were positive correlation between variables and also moderate to negative correlations between variables. 
+
+I prepared the data by transforming the variables to build the models. I built the first model, Mutiple Linear Regression Model 1 by using the Origional Value Model. The second model I built, Mutiple Linear Regression Model 2 by Imputing Model. The third model I built, Mutiple Linear Regression Model 3 by using Stepwise Transformation. I built the fourth model, Mutiple Regression Model 4 by using BoxCox Transformation. I build the fifth model, Binary Logistic Regression Model 1 using Origional Value Model. The sixth model, Binary Logistic Regression Model 2, I built it by using The Stepwise Transformation. The seventh model, Binary Logistic Regression Model 3, I built it by using BoxCox Transformation.  
+
+To make prediction, I compared various metrics for all three Binary Logistics Models, in which I chose Model 5. I finally did a ROC Curve for my chosen model 3, which resulted to a satisfactory model. In the residual plot I saw that the variance of residuals are not uniform which indicates our explanatory variable is probably does not fully explain the data. Also the quartile-quartile plot, as I saw that the residuals are not normally distributed. Therefore, I would say overall this is not a good model.
+
+Lastly, I did a prediction with Model 5, 2058 will not be in a car crash and 83 will be in a car crash. With Model 6, 2066 will not be in a car crash and 75 will be in a car crash. With Model 7, 1978 will not be in a car crash and 163 will be in a car crash.
+
+
+\newpage
+
+## <span style="color: blue;">**REFERENCE**
+
+## <span style="color: blue;">**APPENDIX: ALL CODES**
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```
+
+
